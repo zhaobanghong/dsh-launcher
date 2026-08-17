@@ -32,11 +32,16 @@ namespace DshLauncher
 {
     static class Program
     {
-        public const string Version = "1.0.0";
+        public const string Version = "1.0.1";
 
         internal static readonly string Suffix = Environment.GetEnvironmentVariable("DSH_MUTEX_SUFFIX") ?? "";
         static readonly string MutexName = "dsh_launcher_mutex" + Suffix;
         static readonly string EventName = "dsh_launcher_open" + Suffix;
+
+        const uint ATTACH_PARENT_PROCESS = 0xFFFFFFFF;
+
+        [DllImport("kernel32.dll")]
+        static extern bool AttachConsole(uint dwProcessId);
 
         [STAThread]
         static void Main()
@@ -49,6 +54,13 @@ namespace DshLauncher
             {
                 if (args[i] == "--version" || args[i] == "-v")
                 {
+                    // Print to the parent console when run from a terminal
+                    // (a winexe has none of its own); fall back to a dialog.
+                    if (AttachConsole(ATTACH_PARENT_PROCESS))
+                    {
+                        Console.WriteLine("dsh-launcher " + Version);
+                        return;
+                    }
                     MessageBox.Show("dsh-launcher " + Version,
                         "dsh-launcher", MessageBoxButtons.OK, MessageBoxIcon.Information);
                     return;
@@ -86,6 +98,7 @@ namespace DshLauncher
         public bool openOnStart = true;
         public bool autoRestart = true;        // master switch for plugin-change auto restart
         public bool closeWebUisOnRestart = true;
+        public bool watchdog = true;           // restart the server if it dies on its own
         public int changeQuietSeconds = 3;     // 3 s without new changes before confirming
         public int idlePollSeconds = 3;        // session-idle poll interval
         public int idleConfirmCount = 2;       // consecutive idle polls before restart
@@ -93,9 +106,15 @@ namespace DshLauncher
         public int startTimeoutSeconds = 180;  // max wait for the new server to start
         public string logFile = "";            // "" = %TEMP%\dsh-launcher.log
 
+        // Set when config.json could not be parsed (the user should be told).
+        public static bool ParseFailed;
+        public static string ParseError = "";
+
         public static Config Load()
         {
             var cfg = new Config();
+            ParseFailed = false;
+            ParseError = "";
             string path = ConfigPath();
             try
             {
@@ -112,7 +131,11 @@ namespace DshLauncher
                     try { File.WriteAllText(path, ToJson(cfg)); } catch { }
                 }
             }
-            catch { }
+            catch (Exception ex)
+            {
+                ParseFailed = true;
+                ParseError = ex.Message;
+            }
             return cfg;
         }
 
@@ -139,6 +162,7 @@ namespace DshLauncher
                         case "openOnStart": cfg.openOnStart = Convert.ToBoolean(kv.Value); break;
                         case "autoRestart": cfg.autoRestart = Convert.ToBoolean(kv.Value); break;
                         case "closeWebUisOnRestart": cfg.closeWebUisOnRestart = Convert.ToBoolean(kv.Value); break;
+                        case "watchdog": cfg.watchdog = Convert.ToBoolean(kv.Value); break;
                         case "changeQuietSeconds": cfg.changeQuietSeconds = Convert.ToInt32(kv.Value); break;
                         case "idlePollSeconds": cfg.idlePollSeconds = Convert.ToInt32(kv.Value); break;
                         case "idleConfirmCount": cfg.idleConfirmCount = Convert.ToInt32(kv.Value); break;
@@ -191,6 +215,9 @@ namespace DshLauncher
             { "fail_start", "启动服务失败：" },
             { "fail_open", "打开界面失败：" },
             { "startup_timeout", "服务启动超时，请检查网络后重试（可再次双击本程序重新打开界面）" },
+            { "confirm_restart_busy", "有聊天工作正在进行，重启会中断它。确定要现在重启服务吗？" },
+            { "watchdog_restart", "服务异常退出，正在自动重启" },
+            { "config_failed", "config.json 解析失败，已使用默认配置。\n错误信息：{0}" },
             { "about_text", "DeepSeek Harness 托盘启动器\n版本 {0}\n\n自动启动服务、监控插件变动、聊天结束后自动重启。" },
         };
 
@@ -206,6 +233,9 @@ namespace DshLauncher
             { "fail_start", "Failed to start the service: " },
             { "fail_open", "Failed to open the UI: " },
             { "startup_timeout", "Service startup timed out; check your network and double-click this app again" },
+            { "confirm_restart_busy", "Chat work is in progress and will be interrupted. Restart the service anyway?" },
+            { "watchdog_restart", "The service stopped unexpectedly; restarting automatically" },
+            { "config_failed", "config.json could not be parsed; using defaults.\nError: {0}" },
             { "about_text", "DeepSeek Harness tray launcher\nVersion {0}\n\nStarts the service, watches plugin changes and restarts automatically after chat work finishes." },
         };
     }
@@ -248,12 +278,25 @@ namespace DshLauncher
         DateTime phaseDeadline;
         int idlePollTicks;
         int idleStreak;
-        bool lastBusy;
+
+        // background poller results (updated off the UI thread so the tray never
+        // blocks on network / WMI / netstat calls)
+        volatile bool serverUp;
+        volatile bool busy;
+        Thread pollThread;
+        volatile bool pollRunning;
+        bool everUp;                       // saw the server up at least once
+        DateTime lastServerUpUtc = DateTime.MinValue;
 
         public TrayContext(EventWaitHandle openEvent)
         {
             cfg = Config.Load();
             lang = new Lang(cfg.language);
+            if (Config.ParseFailed)
+            {
+                MessageBox.Show(string.Format(lang.T("config_failed"), Config.ParseError),
+                    cfg.appName, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
             url = "http://127.0.0.1:" + cfg.port;
             workspace = cfg.workspace.Length > 0
                 ? cfg.workspace
@@ -304,8 +347,13 @@ namespace DshLauncher
             house.Tick += HouseTick;
             house.Start();
 
-            if (IsServerUp())
+            StartPoller();
+
+            serverUp = IsServerUp();
+            if (serverUp)
             {
+                everUp = true;
+                lastServerUpUtc = DateTime.UtcNow;
                 if (cfg.openOnStart)
                     OpenApp();
             }
@@ -317,7 +365,43 @@ namespace DshLauncher
                 readyTimer.Tick += CheckReady;
                 readyTimer.Start();
             }
-            Log("init done, serverUp=" + IsServerUp());
+            Log("init done, serverUp=" + serverUp);
+        }
+
+        // Background thread that keeps serverUp / busy fresh so the UI thread
+        // never blocks on network or process scans.
+        void StartPoller()
+        {
+            pollRunning = true;
+            pollThread = new Thread(PollLoop);
+            pollThread.IsBackground = true;
+            pollThread.Name = "dsh-poller";
+            pollThread.Start();
+        }
+
+        void PollLoop()
+        {
+            int tick = 0;
+            while (pollRunning)
+            {
+                try
+                {
+                    serverUp = IsServerUp();
+                    if (serverUp)
+                    {
+                        everUp = true;
+                        lastServerUpUtc = DateTime.UtcNow;
+                    }
+                    tick++;
+                    if (tick * 1000 >= cfg.idlePollSeconds * 1000)
+                    {
+                        tick = 0;
+                        busy = AnySessionRunning();
+                    }
+                }
+                catch { }
+                Thread.Sleep(1000);
+            }
         }
 
         // ---------------------------------------------------------------- housekeeping
@@ -325,6 +409,17 @@ namespace DshLauncher
         void HouseTick(object sender, EventArgs e)
         {
             DateTime now = DateTime.UtcNow;
+
+            // 0) watchdog: the server was up but has now been down for a while and
+            //    it is not because of us - bring it back
+            if (cfg.watchdog && everUp && !serverUp && restartPhase == 0
+                && !pendingRestart && readyTimer == null
+                && now.Subtract(lastServerUpUtc).TotalSeconds > 12)
+            {
+                Log("Watchdog: server down -> auto restart");
+                Balloon(lang.T("watchdog_restart"));
+                BeginRestart();
+            }
 
             // 1) plugin change: confirmed only after changeQuietSeconds without any
             //    new change (each new event refreshes the timer)
@@ -343,13 +438,11 @@ namespace DshLauncher
                 }
             }
 
-            // 2) idle poll: feeds status + restart wait
+            // 2) idle wait (uses the background poller's cached busy result)
             idlePollTicks++;
             if (idlePollTicks * 1000 >= cfg.idlePollSeconds * 1000)
             {
                 idlePollTicks = 0;
-                bool busy = AnySessionRunning();
-                lastBusy = busy;
                 if (pendingRestart && restartPhase == 0)
                 {
                     if (busy)
@@ -368,10 +461,10 @@ namespace DshLauncher
                 }
             }
 
-            // 3) restart machine
+            // 3) restart machine (uses the cached serverUp value)
             if (restartPhase == 1)
             {
-                if (!IsServerUp())
+                if (!serverUp)
                 {
                     Log("Old server stopped -> starting new one");
                     StartServer();
@@ -387,7 +480,7 @@ namespace DshLauncher
             }
             else if (restartPhase == 2)
             {
-                if (IsServerUp())
+                if (serverUp)
                 {
                     restartPhase = 0;
                     restartCooldownUntilUtc = now.AddSeconds(60);
@@ -418,7 +511,7 @@ namespace DshLauncher
 
         void CheckReady(object sender, EventArgs e)
         {
-            if (IsServerUp())
+            if (serverUp)
             {
                 readyTimer.Stop();
                 if (cfg.openOnStart)
@@ -526,6 +619,14 @@ namespace DshLauncher
         void MenuRestart()
         {
             if (restartPhase != 0) return;
+            // Don't kill running work on a stray click.
+            if (busy)
+            {
+                DialogResult r = MessageBox.Show(lang.T("confirm_restart_busy"),
+                    cfg.appName, MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+                if (r != DialogResult.Yes)
+                    return;
+            }
             pendingRestart = false;
             Log("Manual restart requested");
             BeginRestart();
@@ -543,11 +644,23 @@ namespace DshLauncher
             // Tell the user first: the web UIs are about to close and the screen
             // will go blank for a few seconds - without this it looks frozen.
             Balloon(lang.T("restarting"));
-            if (cfg.closeWebUisOnRestart)
-                CloseWebUIs();
-            KillServer();
             restartPhase = 1;
             phaseDeadline = DateTime.UtcNow.AddSeconds(cfg.stopTimeoutSeconds);
+            // The WMI/netstat scans and taskkill are slow: run them off the UI
+            // thread. The restart machine above waits for serverUp to drop.
+            ThreadPool.QueueUserWorkItem(delegate
+            {
+                try
+                {
+                    if (cfg.closeWebUisOnRestart)
+                        CloseWebUIs();
+                    KillServer();
+                }
+                catch (Exception ex)
+                {
+                    Log("restart task error: " + ex.Message);
+                }
+            });
         }
 
         // Close the DeepSeek Harness web windows so the reopened page loads the
@@ -591,7 +704,12 @@ namespace DshLauncher
                         p.WaitForExit(5000);
                         foreach (string line in output.Split('\n'))
                         {
-                            if (!line.Contains(":" + cfg.port) || !line.Contains("ESTABLISHED"))
+                            // Client side of a connection to our port: the FOREIGN
+                            // address port must equal cfg.port exactly (never a
+                            // substring, so :30800 can't match :3080).
+                            if (!line.Contains("ESTABLISHED"))
+                                continue;
+                            if (PortOfColumn(line, 2) != cfg.port)
                                 continue;
                             string[] parts = line.Split(new char[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
                             int pid;
@@ -673,13 +791,16 @@ namespace DshLauncher
                     p.WaitForExit(5000);
                     foreach (string line in output.Split('\n'))
                     {
-                        if (line.Contains(":" + cfg.port) && line.Contains("LISTENING"))
-                        {
-                            string[] parts = line.Split(new char[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
-                            int pid;
-                            if (parts.Length > 0 && int.TryParse(parts[parts.Length - 1], out pid))
-                                return pid;
-                        }
+                        // The LISTENING socket's LOCAL address port must equal
+                        // cfg.port exactly (never a substring).
+                        if (!line.Contains("LISTENING"))
+                            continue;
+                        if (PortOfColumn(line, 1) != cfg.port)
+                            continue;
+                        string[] parts = line.Split(new char[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+                        int pid;
+                        if (parts.Length > 0 && int.TryParse(parts[parts.Length - 1], out pid))
+                            return pid;
                     }
                 }
             }
@@ -688,6 +809,21 @@ namespace DshLauncher
                 Log("netstat failed: " + ex.Message);
             }
             return -1;
+        }
+
+        // Port of the given netstat address column (1 = local, 2 = foreign).
+        // Parses the real address token so :3080 never matches :30800.
+        static int PortOfColumn(string line, int column)
+        {
+            string[] parts = line.Split(new char[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length <= column)
+                return -1;
+            string addr = parts[column];
+            int idx = addr.LastIndexOf(':');
+            if (idx < 0 || idx == addr.Length - 1)
+                return -1;
+            int port;
+            return int.TryParse(addr.Substring(idx + 1), out port) ? port : -1;
         }
 
         // ---------------------------------------------------------------- server
@@ -894,6 +1030,7 @@ namespace DshLauncher
             }
             if (readyTimer != null)
                 readyTimer.Stop();
+            pollRunning = false;   // stop the background poller
             if (watcher != null)
             {
                 watcher.EnableRaisingEvents = false;
@@ -976,6 +1113,14 @@ namespace DshLauncher
         {
             try
             {
+                // Simple rotation: keep the log under 1 MB, park the old one as .old.
+                const long maxBytes = 1024 * 1024;
+                var fi = new FileInfo(logPath);
+                if (fi.Exists && fi.Length > maxBytes)
+                {
+                    try { File.Copy(logPath, logPath + ".old", true); } catch { }
+                    try { File.Delete(logPath); } catch { }
+                }
                 File.AppendAllText(logPath,
                     DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + "  " + message + Environment.NewLine);
             }

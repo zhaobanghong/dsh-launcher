@@ -9,6 +9,7 @@
   "openOnStart": true,
   "autoRestart": true,
   "closeWebUisOnRestart": true,
+  "watchdog": true,
   "changeQuietSeconds": 3,
   "idlePollSeconds": 3,
   "idleConfirmCount": 2,

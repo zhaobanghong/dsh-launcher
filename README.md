@@ -59,6 +59,7 @@ Download `dsh-launcher.exe` from Releases. No .NET SDK needed; Windows 10/11 shi
 | `openOnStart` | `true` | 启动后自动打开界面 |
 | `autoRestart` | `true` | 插件变动自动重启总开关 |
 | `closeWebUisOnRestart` | `true` | 重启时关闭并重开界面窗口 |
+| `watchdog` | `true` | 服务意外退出时自动重启 |
 | `changeQuietSeconds` | `3` | 变动确认前的静默秒数 |
 | `idlePollSeconds` | `3` | 会话空闲轮询间隔（秒） |
 | `idleConfirmCount` | `2` | 连续几次空闲才重启 |

@@ -1,0 +1,12 @@
+# build output
+dist/
+
+# local config / logs (users' machines)
+config.json.bak
+*.log
+
+# editor/OS noise
+.vs/
+.idea/
+Thumbs.db
+.DS_Store

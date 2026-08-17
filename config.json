@@ -1,0 +1,18 @@
+{
+  "port": 3080,
+  "serverCommand": "npx @deepseek-ai/dsh web",
+  "workspace": "",
+  "profileDir": "",
+  "chromeAppId": "",
+  "language": "zh",
+  "appName": "dsh-launcher",
+  "openOnStart": true,
+  "autoRestart": true,
+  "closeWebUisOnRestart": true,
+  "changeQuietSeconds": 3,
+  "idlePollSeconds": 3,
+  "idleConfirmCount": 2,
+  "stopTimeoutSeconds": 15,
+  "startTimeoutSeconds": 180,
+  "logFile": ""
+}

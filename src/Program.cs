@@ -32,7 +32,7 @@ namespace DshLauncher
 {
     static class Program
     {
-        public const string Version = "1.0.1";
+        public const string Version = "1.0.2";
         public const string AppName = "DeepSeek Harness";
 
         internal static readonly string Suffix = Environment.GetEnvironmentVariable("DSH_MUTEX_SUFFIX") ?? "";
@@ -304,8 +304,8 @@ namespace DshLauncher
         volatile bool busy;
         Thread pollThread;
         volatile bool pollRunning;
-        bool everUp;                       // saw the server up at least once
-        DateTime lastServerUpUtc = DateTime.MinValue;
+        volatile bool everUp;              // saw the server up at least once
+        long lastServerUpTicks;            // Interlocked ticks of the last up sighting
 
         public TrayContext(EventWaitHandle openEvent)
         {
@@ -372,7 +372,7 @@ namespace DshLauncher
             if (serverUp)
             {
                 everUp = true;
-                lastServerUpUtc = DateTime.UtcNow;
+                Interlocked.Exchange(ref lastServerUpTicks, DateTime.UtcNow.Ticks);
                 if (cfg.openOnStart)
                     OpenApp();
             }
@@ -409,7 +409,7 @@ namespace DshLauncher
                     if (serverUp)
                     {
                         everUp = true;
-                        lastServerUpUtc = DateTime.UtcNow;
+                        Interlocked.Exchange(ref lastServerUpTicks, DateTime.UtcNow.Ticks);
                     }
                     tick++;
                     if (tick * 1000 >= cfg.idlePollSeconds * 1000)
@@ -430,10 +430,11 @@ namespace DshLauncher
             DateTime now = DateTime.UtcNow;
 
             // 0) watchdog: the server was up but has now been down for a while and
-            //    it is not because of us - bring it back
+            //    it is not because of us - bring it back. Only armed after the
+            //    initial startup finished (readyTimer == null).
             if (cfg.watchdog && everUp && !serverUp && restartPhase == 0
                 && !pendingRestart && readyTimer == null
-                && now.Subtract(lastServerUpUtc).TotalSeconds > 12)
+                && now.Subtract(new DateTime(Interlocked.Read(ref lastServerUpTicks))).TotalSeconds > 12)
             {
                 Log("Watchdog: server down -> auto restart");
                 Balloon(lang.T("watchdog_restart"));
@@ -510,6 +511,11 @@ namespace DshLauncher
                 else if (now > phaseDeadline)
                 {
                     restartPhase = 0;
+                    // The server did not come back: disarm the watchdog so it
+                    // stops firing every cycle until the server is genuinely
+                    // observed up again (PollLoop re-arms it).
+                    everUp = false;
+                    Interlocked.Exchange(ref lastServerUpTicks, 0);
                     Log("Restart failed: startup timeout");
                     Balloon(lang.T("fail_timeout"), ToolTipIcon.Error);
                 }
@@ -533,12 +539,14 @@ namespace DshLauncher
             if (serverUp)
             {
                 readyTimer.Stop();
+                readyTimer = null;   // initial startup done - arm the watchdog
                 if (cfg.openOnStart)
                     OpenApp();
             }
             else if (++waitTicks > cfg.startTimeoutSeconds / 2)
             {
                 readyTimer.Stop();
+                readyTimer = null;   // startup timed out; watchdog stays disarmed
                 Balloon(lang.T("startup_timeout"), ToolTipIcon.Warning);
             }
         }
@@ -725,8 +733,9 @@ namespace DshLauncher
                         {
                             // Client side of a connection to our port: the FOREIGN
                             // address port must equal cfg.port exactly (never a
-                            // substring, so :30800 can't match :3080).
-                            if (!line.Contains("ESTABLISHED"))
+                            // substring, so :30800 can't match :3080). netstat
+                            // state names are English constants on all locales.
+                            if (!"ESTABLISHED".Equals(ColumnOf(line, 3), StringComparison.OrdinalIgnoreCase))
                                 continue;
                             if (PortOfColumn(line, 2) != cfg.port)
                                 continue;
@@ -811,8 +820,9 @@ namespace DshLauncher
                     foreach (string line in output.Split('\n'))
                     {
                         // The LISTENING socket's LOCAL address port must equal
-                        // cfg.port exactly (never a substring).
-                        if (!line.Contains("LISTENING"))
+                        // cfg.port exactly (never a substring). netstat state
+                        // names are English constants on all locales.
+                        if (!"LISTENING".Equals(ColumnOf(line, 3), StringComparison.OrdinalIgnoreCase))
                             continue;
                         if (PortOfColumn(line, 1) != cfg.port)
                             continue;
@@ -830,14 +840,22 @@ namespace DshLauncher
             return -1;
         }
 
+        // Column of a netstat -ano line: 0=Proto, 1=Local, 2=Foreign, 3=State, 4=PID.
+        static string ColumnOf(string line, int column)
+        {
+            string[] parts = line.Split(new char[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length <= column)
+                return null;
+            return parts[column];
+        }
+
         // Port of the given netstat address column (1 = local, 2 = foreign).
         // Parses the real address token so :3080 never matches :30800.
         static int PortOfColumn(string line, int column)
         {
-            string[] parts = line.Split(new char[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
-            if (parts.Length <= column)
+            string addr = ColumnOf(line, column);
+            if (addr == null)
                 return -1;
-            string addr = parts[column];
             int idx = addr.LastIndexOf(':');
             if (idx < 0 || idx == addr.Length - 1)
                 return -1;

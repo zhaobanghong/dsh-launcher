@@ -39,8 +39,9 @@ $cscArgs = @(
 & $csc @cscArgs
 if ($LASTEXITCODE -ne 0) { throw "Build failed with exit code $LASTEXITCODE" }
 
-# Ship the default config alongside the exe so users can tweak it.
-Copy-Item (Join-Path $root "config.json") (Join-Path $outDir "config.json") -Force
+# Note: no config.json is copied here on purpose. The exe writes its config to
+# %APPDATA%\dsh-launcher\config.json on first run (portable mode only when the
+# user places one next to the exe), so the build output stays a single file.
 
 Write-Host ""
 Write-Host "Build OK: $outFull"

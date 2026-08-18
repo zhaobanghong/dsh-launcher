@@ -6,7 +6,7 @@
 
 A tiny Windows tray app that turns DSH into a one-click tool: starts the service hidden, opens the UI, auto-restarts when plugins change, and lives in the system tray.
 
-![Windows](https://img.shields.io/badge/Windows-10%2F11-blue) ![C#](https://img.shields.io/badge/.NET-Framework%204.x-512BD4) ![build](https://img.shields.io/github/actions/workflow/status/zhaobanghong/dsh-launcher/build.yml?label=build)
+![Windows](https://img.shields.io/badge/Windows-10%2F11-blue) ![C#](https://img.shields.io/badge/.NET-Framework%204.x-512BD4) ![build](https://img.shields.io/github/actions/workflow/status/BoHe-dev/dsh-launcher/build.yml?label=build)
 
 ---
 
@@ -27,7 +27,7 @@ A tiny Windows tray app that turns DSH into a one-click tool: starts the service
 
 ## 下载 Download
 
-从 [Releases](https://github.com/zhaobanghong/dsh-launcher/releases) 下载 `dsh-launcher.exe`（Windows 10/11，无需安装 .NET——系统自带 .NET Framework 4.x）。
+从 [Releases](https://github.com/BoHe-dev/dsh-launcher/releases) 下载 `dsh-launcher.exe`（Windows 10/11，无需安装 .NET——系统自带 .NET Framework 4.x）。
 
 Download `dsh-launcher.exe` from Releases. No .NET SDK needed; Windows 10/11 ships the required .NET Framework 4.x.
 
@@ -73,7 +73,7 @@ Download `dsh-launcher.exe` from Releases. No .NET SDK needed; Windows 10/11 shi
 ## 从源码构建 Build from source
 
 ```powershell
-git clone https://github.com/zhaobanghong/dsh-launcher.git
+git clone https://github.com/BoHe-dev/dsh-launcher.git
 cd dsh-launcher
 .\build.ps1          # 输出 dist\dsh-launcher.exe
 ```

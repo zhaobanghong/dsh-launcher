@@ -5,7 +5,7 @@
   "profileDir": "",
   "chromeAppId": "",
   "language": "zh",
-  "appName": "dsh-launcher",
+  "appName": "DeepSeek Harness",
   "openOnStart": true,
   "autoRestart": true,
   "closeWebUisOnRestart": true,

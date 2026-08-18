@@ -58,7 +58,7 @@ Download `dsh-launcher.exe` from Releases. No .NET SDK needed; Windows 10/11 shi
 | `profileDir` | `""`（`~/.dsh/profiles/web`） | 插件监控目录 |
 | `chromeAppId` | `""`（自动发现） | DSH Chrome PWA 的 app-id；留空自动扫描 |
 | `language` | `"zh"` | `"zh"` 或 `"en"` |
-| `appName` | `"dsh-launcher"` | 托盘提示/气泡标题 |
+| `appName` | `"DeepSeek Harness"` | 托盘提示/气泡标题 |
 | `openOnStart` | `true` | 启动后自动打开界面 |
 | `autoRestart` | `true` | 插件变动自动重启总开关 |
 | `closeWebUisOnRestart` | `true` | 重启时关闭并重开界面窗口 |

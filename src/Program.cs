@@ -33,6 +33,7 @@ namespace DshLauncher
     static class Program
     {
         public const string Version = "1.0.1";
+        public const string AppName = "DeepSeek Harness";
 
         internal static readonly string Suffix = Environment.GetEnvironmentVariable("DSH_MUTEX_SUFFIX") ?? "";
         static readonly string MutexName = "dsh_launcher_mutex" + Suffix;
@@ -58,10 +59,10 @@ namespace DshLauncher
                     // (a winexe has none of its own); fall back to a dialog.
                     if (AttachConsole(ATTACH_PARENT_PROCESS))
                     {
-                        Console.WriteLine("dsh-launcher " + Version);
+                        Console.WriteLine(AppName + " " + Version);
                         return;
                     }
-                    MessageBox.Show("dsh-launcher " + Version,
+                    MessageBox.Show(AppName + " " + Version,
                         "dsh-launcher", MessageBoxButtons.OK, MessageBoxIcon.Information);
                     return;
                 }
@@ -94,7 +95,7 @@ namespace DshLauncher
         public string profileDir = "";         // plugin watch dir; "" = ~/.dsh/profiles/web
         public string chromeAppId = "";        // "" = auto-detect the DSH Chrome PWA
         public string language = "zh";         // "zh" or "en"
-        public string appName = "dsh-launcher";
+        public string appName = "DeepSeek Harness";
         public bool openOnStart = true;
         public bool autoRestart = true;        // master switch for plugin-change auto restart
         public bool closeWebUisOnRestart = true;

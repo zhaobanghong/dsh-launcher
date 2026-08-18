@@ -33,14 +33,17 @@ Download `dsh-launcher.exe` from Releases. No .NET SDK needed; Windows 10/11 shi
 
 ## 使用 Usage
 
-1. 把 `dsh-launcher.exe` 和同目录的 `config.json` 放到任意文件夹（例如 `D:\tools\dsh-launcher\`）
-   Put `dsh-launcher.exe` and `config.json` in any folder (e.g. `D:\tools\dsh-launcher\`).
-2. 双击 `dsh-launcher.exe`。首次运行会自动生成默认 `config.json`（若未提供）
-   Double-click the exe. A default `config.json` is created on first run if missing.
+1. 把 `dsh-launcher.exe` 放到任意文件夹（例如 `D:\tools\dsh-launcher\`）或直接放桌面
+   Put `dsh-launcher.exe` anywhere (e.g. `D:\tools\dsh-launcher\`) or on the Desktop.
+2. 双击 `dsh-launcher.exe`。**不会在 exe 旁边生成任何文件**——配置自动写到 `%APPDATA%\dsh-launcher\config.json`（可随时编辑）
+   Double-click the exe. **No files are created next to it** - config is auto-created at `%APPDATA%\dsh-launcher\config.json`.
 3. 右键托盘图标可：打开界面、手动重启服务、退出（退出会停止服务）
    Right-click the tray icon: open UI, restart service, or exit (exit stops the service).
 4. 日志在 `%TEMP%\dsh-launcher.log`，出问题先看它
    Logs go to `%TEMP%\dsh-launcher.log` - check it first when something is off.
+
+> **便携模式 Portable mode**：把 `config.json` 放在 exe **同目录**，程序会优先读它（适合整个文件夹拷走用）；否则用 `%APPDATA%\dsh-launcher\config.json`（首次运行自动生成）。
+> If a `config.json` sits next to the exe it wins (portable setup); otherwise the AppData one is used (auto-created on first run).
 
 > 前提：已安装 [Node.js](https://nodejs.org)（用于 `npx`），且能通过 `npx @deepseek-ai/dsh web` 启动 DSH。
 > Prerequisite: [Node.js](https://nodejs.org) installed (for `npx`), DSH startable via `npx @deepseek-ai/dsh web`.

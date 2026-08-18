@@ -128,7 +128,14 @@ namespace DshLauncher
                 else
                 {
                     // First run: write a default config the user can edit.
-                    try { File.WriteAllText(path, ToJson(cfg)); } catch { }
+                    try
+                    {
+                        string dir = Path.GetDirectoryName(path);
+                        if (!string.IsNullOrEmpty(dir))
+                            Directory.CreateDirectory(dir);
+                        File.WriteAllText(path, ToJson(cfg));
+                    }
+                    catch { }
                 }
             }
             catch (Exception ex)
@@ -141,7 +148,18 @@ namespace DshLauncher
 
         static string ConfigPath()
         {
-            return Path.Combine(Path.GetDirectoryName(Application.ExecutablePath), "config.json");
+            // Portable mode: a config.json sitting next to the exe wins, so the
+            // whole thing can be carried around in one folder.
+            string exeDir = Path.GetDirectoryName(Application.ExecutablePath);
+            string local = Path.Combine(exeDir, "config.json");
+            if (File.Exists(local))
+                return local;
+            // Standard mode: per-user AppData. The exe itself stays a single
+            // clean file - it can live on the Desktop or anywhere else without
+            // spawning extra files next to itself.
+            return Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                "dsh-launcher", "config.json");
         }
 
         static void Apply(Config cfg, Dictionary<string, object> dict)
